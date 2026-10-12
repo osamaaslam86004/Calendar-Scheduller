@@ -294,9 +294,11 @@ class LocalLlamaProvider(BaseLLMProvider):
 # 5. FALLBACK ENGINE ORCHESTRATOR
 # ==========================================
 class CalendarFunctionEngine:
-    def __init__(self):
+    def __init__(self, default_tz: str = "UTC"):
         # Define provider priority sequence
         self.providers = [OpenRouterProvider(), GoogleProvider(), LocalLlamaProvider()]
+        # Default timezone used when invalid tz strings are encountered
+        self.default_tz = default_tz
 
     # This protects against off-by-one-hour scheduling errors during DST transitions
     def _parse_and_format_timezone_context(
@@ -309,7 +311,7 @@ class CalendarFunctionEngine:
         try:
             tz = ZoneInfo(user_tz_str)
         except (ZoneInfoNotFoundError, ValueError):
-            tz = ZoneInfo("UTC")
+            tz = ZoneInfo(self.default_tz)
 
         localized_dt = anchor_dt.astimezone(tz)
         utc_offset = localized_dt.utcoffset()
@@ -331,7 +333,9 @@ class CalendarFunctionEngine:
         now_utc = datetime.now(timezone.utc)
         current_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         current_date_str = now_utc.strftime("%Y-%m-%d (%A)")
-        timezone_context = self._parse_and_format_timezone_context("UTC", now_utc)
+        timezone_context = self._parse_and_format_timezone_context(
+            self.default_tz, now_utc
+        )
 
         return (
             f"CURRENT DATETIME REFERENCE (UTC): {current_iso}\n"
