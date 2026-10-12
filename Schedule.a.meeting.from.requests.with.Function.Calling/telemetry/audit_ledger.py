@@ -29,12 +29,17 @@ class AuditLedger:
             re.compile(r"([a-zA-Z0-9_.+-]+)@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)"),
             lambda m: "[MASKED]@" + m.group(2),
         ),
-        # US-like phone numbers (simple): mask digits leaving last 2
-        (re.compile(r"(\+?\d[\d \-()]{6,}\d)"), lambda m: _mask_digits(m.group(1), 2)),
         # SSN-like (xxx-xx-xxxx)
         (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[MASKED_SSN]"),
         # Credit card-like numbers (13-16 digits)
         (re.compile(r"\b(?:\d[ -]*?){13,16}\b"), "[MASKED_CC]"),
+        # US-like phone numbers (standard 7-digit or 10/11-digit with optional country/area code): mask digits leaving last 2
+        (
+            re.compile(
+                r"(\b(?:\+?1[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}\b|\b\d{3}[-.\s]\d{4}\b)"
+            ),
+            lambda m: _mask_digits(m.group(1), 2),
+        ),
     ]
 
     def __init__(
@@ -47,7 +52,13 @@ class AuditLedger:
         self.file_path = Path(file_path)
         self.hmac_key = hmac_key
         self.flush_interval = flush_interval
-        self.loop = loop or asyncio.get_event_loop()
+        try:
+            self.loop = loop or asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                self.loop = loop or asyncio.get_event_loop()
+            except RuntimeError:
+                self.loop = None
 
         self._queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue()
         self._writer_task: Optional[asyncio.Task] = None
@@ -69,7 +80,15 @@ class AuditLedger:
 
     def start(self) -> None:
         """Start background writer task. Call once when app starts."""
-        if self._writer_task is None or self._writer_task.done():
+        if self.loop is None:
+            try:
+                self.loop = asyncio.get_running_loop()
+            except RuntimeError:
+                try:
+                    self.loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    return
+        if self.loop and (self._writer_task is None or self._writer_task.done()):
             self._stopping.clear()
             self._writer_task = self.loop.create_task(self._writer_loop())
             logger.debug("AuditLedger writer started")
@@ -88,7 +107,9 @@ class AuditLedger:
         # read last non-empty line
         with self.file_path.open("rb") as f:
             try:
-                f.seek(-2, os.SEEK_END)
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                f.seek(max(0, size - 4096), os.SEEK_SET)
             except OSError:
                 # file small
                 f.seek(0)
