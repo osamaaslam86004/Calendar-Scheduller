@@ -211,6 +211,28 @@ celery -A celery_app.celery_app worker --loglevel=info -Q calendar
 
 If you are using the included `docker-compose.yaml`, the `web` and `celery_worker` services are preconfigured to run together.
 
+### 6. Run the test suite
+
+The repository is organized by test scope:
+
+- `tests/unit/` — isolated unit coverage for routes, tasks, middleware, telemetry, and utilities
+- `tests/integration/` — cross-component integration checks
+- `tests/performance/` — performance-oriented validation and load-focused checks
+- `tests/e2e/` — end-to-end workflow checks against a running environment
+- `tests/conftest.py` — shared pytest fixtures and project-wide test setup
+
+To run the unit suite locally:
+
+```bash
+# Windows PowerShell
+.\env\Scripts\python.exe -m pytest -q tests/unit -m unit
+
+# Linux/macOS
+pytest -q tests/unit -m unit
+```
+
+This project’s default validation target is the unit suite under `tests/unit`, which covers middleware, tasks, routes, telemetry, and utilities.
+
 ## How to use this project
 
 ### Authentication
@@ -337,26 +359,30 @@ This project is a strong foundation, but production deployment should include:
 - ✅ User tenancy or multi-tenant isolation for production deployments
 - ✅ Additional retry policies and backoff tuning for Google API calls
 - ✅ Storage of OAuth refresh/write tokens in a hardened secret store
-- ✅ Fine-Grained Tenant RBAC & Security Subsystem                                               1. Technical Deliverables: Enforce tenant ABAC with cryptographically signed JWTs; establish an append-only audit trail                                                   2. Strategic Operational Impact: Prevents cross-tenant data leaks and ensures complete forensic traceability for DLQ replays
+- ✅ Fine-Grained Tenant RBAC & Security Subsystem 1. Technical Deliverables: Enforce tenant ABAC with cryptographically signed JWTs; establish an append-only audit trail 2. Strategic Operational Impact: Prevents cross-tenant data leaks and ensures complete forensic traceability for DLQ replays
 - ✅ Immutable Audit Trail & Structured Event Telemetry Subsystem
+
 1. Signed tenant JWT context and request-time tenant enforcement
-2. Tenant-aware DLQ replay validation to stop cross-tenant leakage                                               
+2. Tenant-aware DLQ replay validation to stop cross-tenant leakage
 3. Centralized append-only audit event writing with HMAC tamper evidence
 4. Correlation ID propagation across requests and task execution
 5. Structured JSON logging enriched with correlation metadata
 6. Audit emission for OAuth refreshes, retry/throttling events, circuit-breaker transitions, and task lifecycle events
+
 - ✅ Event Streaming Bus & Asynchronous Messaging Subsystem
+
 1. Automated backpressure: P95/P99 tracking enables real-time load shedding without manual intervention
 2. Zero-downtime tuning: Rate limits and breaker policies can be adjusted live from Redis, no cluster redeploy needed
 3. Scalable event consumption: Redis Streams consumer groups allow horizontal scaling of telemetry processors
 4. Fine-grained observability: Every policy change is recorded in the immutable audit trail with full correlation context
+
 - ✅ Dynamic Feature Flagging & Anomaly Detection Subsystem
+
 1. Middleware layer: Intercepts all requests, measures latency, triggers anomaly response
 2. Circuit breaker: Queries feature flags for dynamic threshold adjustment
 3. Rate limiter: Falls back to feature flags for capacity tuning
 4. Background jobs: Can be throttled dynamically via feature flags
 5. Audit trail: All policy changes logged with correlation IDs
-
 
 ## TODO / roadmap
 
@@ -379,4 +405,3 @@ This project is a strong foundation, but production deployment should include:
 - Simulate latency spikes to confirm automatic circuit breaker half-open triggering
 - Add monitoring dashboard for real-time percentile visualization
 - Consider advanced anomaly models (seasonal decomposition, ML-based detection)
-```
