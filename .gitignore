@@ -173,3 +173,5 @@ cython_debug/
 
 **/key.json
 **/client_secret.json
+
+**/scripts
