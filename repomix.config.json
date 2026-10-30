@@ -1,0 +1,42 @@
+{
+  "output": {
+    "filePath": "repomix-output.txt",
+    "style": "plain",
+    "headerText": "Codebase snapshot generated for architectural audit.",
+    "topFilesFirst": true,
+    "showLineNumbers": false,
+    "removeComments": false,
+    "removeEmptyLines": true
+  },
+  "ignore": {
+    "useGitignore": true,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/migrations/*",
+      "!**/migrations/__init__.py",
+      "**/*lock*",
+      "poetry.lock",
+      "Pipfile.lock",
+      "pdm.lock",
+      "requirements*.txt",
+      "**/__pycache__/**",
+      "**/*.pyc",
+      "**/*.pyo",
+      "**/*.pyd",
+      "**/.pytest_cache/**",
+      "**/.mypy_cache/**",
+      "**/.ruff_cache/**",
+      "**/.coverage",
+      "**/htmlcov/**",
+      "**/*.log",
+      "**/*.sqlite3",
+      "**/*.db",
+      "**/media/**",
+      "**/staticfiles/**",
+      "**/static/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/tests/**"
+    ]
+  }
+}
