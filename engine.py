@@ -1,27 +1,23 @@
-import os
-import math
 import logging
-import outlines
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Dict, Optional
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 import httpx
+import outlines
+import torch
 
 # Google SDK imports
 from google import genai
 from google.genai import types
 
-# Local Llama imports
-from llama_cpp import Llama
+# Prompt Template import
 from outlines.templates import Template
-from huggingface_hub import hf_hub_download
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config.settings import settings
 from schemas import ScheduleCalendarEventFunction
 from utilities.circuit_breaker import is_tripped, trip
-
-import httpx
 
 try:
     from google.api_core import exceptions as google_exceptions
@@ -239,23 +235,40 @@ class LocalLlamaProvider(BaseLLMProvider):
         self.filename = filename
         self.cache_dir = cache_dir
         self._model = None  # Lazy-load holder
+        self._tokenizer = None
 
     def _initialize_model(self):
-        """Loads weights only when first invoked."""
+        """Lazy loads tokenizer and model weights using Hugging Face transformers."""
 
-        if self._model is None:
-            logger.info(f"Initializing local GGUF model: {self.filename}")
-            n_threads = max(3, math.ceil((os.cpu_count() or 4) / 2))
+        if self._model is None or self._tokenizer is None:
+            logger.info(f"Initializing local GGUF model via PyTorch: {self.filename}")
 
-            model_path = hf_hub_download(
-                repo_id=self.repo_id,
-                filename=self.filename,
+            hf_token = None
+            try:
+                hf_token = settings.llm.hf__token.get_secret_value()
+            except Exception:
+                pass
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.repo_id,
+                gguf_file=self.filename,
                 cache_dir=self.cache_dir,
-                token=settings.llm.hf__token.get_secret_value(),
+                token=hf_token,
             )
 
-            llm = Llama(model_path=model_path, n_ctx=2048, n_threads=n_threads)
-            self._model = outlines.from_llamacpp(llm)
+            hf_model = AutoModelForCausalLM.from_pretrained(
+                self.repo_id,
+                gguf_file=self.filename,
+                cache_dir=self.cache_dir,
+                torch_dtype=torch.bfloat16
+                if torch.cuda.is_available()
+                else torch.float32,
+                device_map="auto",
+                token=hf_token,
+            )
+
+            # Wrap with Outlines for guaranteed structured JSON matching ScheduleCalendarEventFunction
+            self._model = outlines.from_transformers(hf_model, self._tokenizer)
 
     def generate_schedule(
         self, system_instruction: str, user_content: str
@@ -263,18 +276,22 @@ class LocalLlamaProvider(BaseLLMProvider):
 
         self._initialize_model()
 
-        formatted_prompt = (
-            f"<|im_start|>system\n{system_instruction}<|im_end|>\n"
-            f"<|im_start|>user\n{user_content}<|im_end|>\n"
-            f"<|im_start|>assistant\n"
+        messages = [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_content},
+        ]
+
+        # Format prompt using the tokenizer's built-in chat template
+        formatted_prompt = self._tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
         )
 
+        # Outlines constrained generation guarantees output matches ScheduleCalendarEventFunction schema
         raw_json = self._model(
             formatted_prompt,
             output_type=ScheduleCalendarEventFunction,
             temperature=0.0,
             max_tokens=300,
-            stop=["<|im_end|>", "<|endoftext|>"],
         )
 
         # Local CPU/GGUF models cost $0 USD and don't report remote API usage
@@ -302,11 +319,11 @@ class CalendarFunctionEngine:
 
     # This protects against off-by-one-hour scheduling errors during DST transitions
     def _parse_and_format_timezone_context(
-        self, user_tz_str: str, anchor_dt: Optional[datetime] = None
-    ) -> Dict[str, str]:
+        self, user_tz_str: str, anchor_dt: datetime | None = None
+    ) -> dict[str, str]:
         """Resolve IANA timezone and emit wall-clock context for deterministic scheduling."""
         if not anchor_dt:
-            anchor_dt = datetime.now(timezone.utc)
+            anchor_dt = datetime.now(UTC)
 
         try:
             tz = ZoneInfo(user_tz_str)
@@ -330,7 +347,7 @@ class CalendarFunctionEngine:
         }
 
     def _build_prompt(self, request_text: str) -> str:
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         current_iso = now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
         current_date_str = now_utc.strftime("%Y-%m-%d (%A)")
         timezone_context = self._parse_and_format_timezone_context(
