@@ -7,12 +7,12 @@ Provides:
   and database sessions.
 """
 
-import asyncio
+import builtins
 import fnmatch
-import json
 import time
-from typing import Any, Dict, List, Optional, Set
-from unittest.mock import AsyncMock, MagicMock, patch
+import warnings
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,13 +21,19 @@ from config.settings import settings
 from main import app as fastapi_app
 from utilities.security import build_tenant_context
 
+warnings.filterwarnings(
+    "ignore",
+    message="Using httpx with starlette.testclient is deprecated.*",
+    category=DeprecationWarning,
+)
+
 
 class InMemoryPubSub:
     """Mock PubSub for Redis event streaming."""
 
     def __init__(self, in_memory_redis: "InMemoryRedis"):
         self.redis = in_memory_redis
-        self.subscribed_channels: Set[str] = set()
+        self.subscribed_channels: set[str] = set()
 
     def subscribe(self, *channels: str):
         self.subscribed_channels.update(channels)
@@ -80,15 +86,13 @@ class InMemoryPipeline:
 class InMemoryRedisLock:
     """Mock Redis Lock."""
 
-    def __init__(
-        self, redis: "InMemoryRedis", name: str, timeout: Optional[float] = None
-    ):
+    def __init__(self, redis: "InMemoryRedis", name: str, timeout: float | None = None):
         self.redis = redis
         self.name = name
         self.timeout = timeout
         self.acquired = False
 
-    def acquire(self, blocking: bool = True, token: Optional[str] = None):
+    def acquire(self, blocking: bool = True, token: str | None = None):
         res = self.redis.set(
             self.name, token or "locked", nx=True, ex=int(self.timeout or 30)
         )
@@ -121,9 +125,9 @@ class InMemoryRedis:
     """
 
     def __init__(self):
-        self.data: Dict[str, Any] = {}
-        self.expires: Dict[str, float] = {}
-        self.channels: Dict[str, List[str]] = {}
+        self.data: dict[str, Any] = {}
+        self.expires: dict[str, float] = {}
+        self.channels: dict[str, list[str]] = {}
 
     def _is_expired(self, key: str) -> bool:
         if key in self.expires:
@@ -141,7 +145,7 @@ class InMemoryRedis:
         self.channels.clear()
         return True
 
-    def get(self, name: str) -> Optional[str]:
+    def get(self, name: str) -> str | None:
         if self._is_expired(name):
             return None
         val = self.data.get(name)
@@ -155,8 +159,8 @@ class InMemoryRedis:
         self,
         name: str,
         value: Any,
-        ex: Optional[int] = None,
-        px: Optional[int] = None,
+        ex: int | None = None,
+        px: int | None = None,
         nx: bool = False,
         xx: bool = False,
     ) -> bool:
@@ -224,9 +228,9 @@ class InMemoryRedis:
     def hset(
         self,
         name: str,
-        key: Optional[str] = None,
-        value: Optional[Any] = None,
-        mapping: Optional[Dict[str, Any]] = None,
+        key: str | None = None,
+        value: Any | None = None,
+        mapping: dict[str, Any] | None = None,
     ) -> int:
         self._is_expired(name)
         if name not in self.data or not isinstance(self.data[name], dict):
@@ -244,7 +248,7 @@ class InMemoryRedis:
             h[str(key)] = str(value)
         return count
 
-    def hget(self, name: str, key: str) -> Optional[str]:
+    def hget(self, name: str, key: str) -> str | None:
         if self._is_expired(name):
             return None
         h = self.data.get(name, {})
@@ -252,7 +256,7 @@ class InMemoryRedis:
             return h.get(str(key))
         return None
 
-    def hgetall(self, name: str) -> Dict[str, str]:
+    def hgetall(self, name: str) -> dict[str, str]:
         if self._is_expired(name):
             return {}
         h = self.data.get(name, {})
@@ -288,7 +292,7 @@ class InMemoryRedis:
                 removed += 1
         return removed
 
-    def smembers(self, name: str) -> Set[str]:
+    def smembers(self, name: str) -> builtins.set[str]:
         if self._is_expired(name):
             return set()
         s = self.data.get(name, set())
@@ -323,7 +327,7 @@ class InMemoryRedis:
             lst.insert(0, str(val) if not isinstance(val, str) else val)
         return len(lst)
 
-    def lpop(self, name: str) -> Optional[str]:
+    def lpop(self, name: str) -> str | None:
         if self._is_expired(name) or name not in self.data:
             return None
         lst = self.data[name]
@@ -331,7 +335,7 @@ class InMemoryRedis:
             return lst.pop(0)
         return None
 
-    def rpop(self, name: str) -> Optional[str]:
+    def rpop(self, name: str) -> str | None:
         if self._is_expired(name) or name not in self.data:
             return None
         lst = self.data[name]
@@ -339,7 +343,7 @@ class InMemoryRedis:
             return lst.pop()
         return None
 
-    def lrange(self, name: str, start: int, end: int) -> List[str]:
+    def lrange(self, name: str, start: int, end: int) -> list[str]:
         if self._is_expired(name) or name not in self.data:
             return []
         lst = self.data[name]
@@ -401,10 +405,10 @@ class InMemoryRedis:
     def pipeline(self) -> InMemoryPipeline:
         return InMemoryPipeline(self)
 
-    def lock(self, name: str, timeout: Optional[float] = None) -> InMemoryRedisLock:
+    def lock(self, name: str, timeout: float | None = None) -> InMemoryRedisLock:
         return InMemoryRedisLock(self, name, timeout)
 
-    def keys(self, pattern: str = "*") -> List[str]:
+    def keys(self, pattern: str = "*") -> list[str]:
         res = []
         for k in list(self.data.keys()):
             if not self._is_expired(k) and fnmatch.fnmatch(k, pattern):
@@ -589,10 +593,11 @@ def admin_headers():
 @pytest.fixture
 def client(async_redis, sync_redis):
     """Provide a TestClient connected to the FastAPI application with mocked cache/db."""
-    with patch("config.cache.get_redis_client", return_value=async_redis), patch(
-        "redis.Redis.from_url", return_value=sync_redis
-    ), patch("dlq.redis_client", sync_redis), patch(
-        "tasks.events.redis_client", sync_redis
+    with (
+        patch("config.cache.get_redis_client", return_value=async_redis),
+        patch("redis.Redis.from_url", return_value=sync_redis),
+        patch("dlq.redis_client", sync_redis),
+        patch("tasks.events.redis_client", sync_redis),
+        TestClient(fastapi_app) as test_client,
     ):
-        with TestClient(fastapi_app) as test_client:
-            yield test_client
+        yield test_client
