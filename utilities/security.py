@@ -1,4 +1,4 @@
-﻿# utilities/securiyt.py
+# utilities/securiyt.py
 
 # Example Generation
 # import secrets
@@ -13,7 +13,7 @@ import logging
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import jwt
 import redis
@@ -189,7 +189,7 @@ def append_audit_event(
             "metadata": metadata or {},
             "request_id": request_id or correlation_id,
             "correlation_id": correlation_id,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         digest = hmac.new(
             MASTER_KEY,
@@ -295,7 +295,7 @@ def append_event_stream(
         event = {
             "event_type": event_type,
             "tenant_id": tenant_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "correlation_id": correlation_id
             or get_current_correlation_id()
             or generate_correlation_id(),
@@ -396,13 +396,14 @@ def read_stream_group(
 
 # --- TENANT CONTEXT & AUDIT LOGGING DEPENDENCIES ---
 
+
 def get_current_tenant_context(request: Request) -> dict:
     """FastAPI dependency to securely retrieve validated tenant context."""
     context = getattr(request.state, "tenant_context", None)
     if not context:
         raise HTTPException(
-            status_code=401, 
-            detail="Tenant context missing. TenantRBACMiddleware must be installed."
+            status_code=401,
+            detail="Tenant context missing. TenantRBACMiddleware must be installed.",
         )
     return context
 
@@ -412,10 +413,11 @@ class AuditLogger:
     A tenant-scoped audit logger dependency.
     Automatically injects the active tenant ID and fallback mode into the audit record.
     """
+
     def __init__(
-        self, 
-        request: Request, 
-        tenant_context: dict = Depends(get_current_tenant_context)
+        self,
+        request: Request,
+        tenant_context: dict = Depends(get_current_tenant_context),
     ):
         self.request = request
         self.tenant_context = tenant_context
@@ -424,18 +426,20 @@ class AuditLogger:
         # Attempt to pull user_id if authenticated
         self.user_id = getattr(request.state, "user_id", None)
 
-    def log(self, event_type: str, action: str, resource: str, metadata: dict | None = None) -> dict:
+    def log(
+        self, event_type: str, action: str, resource: str, metadata: dict | None = None
+    ) -> dict:
         """Trigger an audit log entry explicitly bound to the current tenant."""
         meta = metadata or {}
         meta["fallback_mode"] = self.fallback_mode
-        
+
         return append_audit_event(
             event_type=event_type,
             actor_id=self.user_id,
             tenant_id=self.tenant_id,
             action=action,
             resource=resource,
-            metadata=meta
+            metadata=meta,
         )
 
 

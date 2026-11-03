@@ -1,14 +1,12 @@
 # tasks.py
 
 import asyncio
-import time
 import logging
-import os
+import time
 
-from outlines.templates import Template
 from celery.exceptions import MaxRetriesExceededError
-from celery_app import celery_app
 from googleapiclient.errors import HttpError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -16,25 +14,22 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.pool import NullPool
-from sqlalchemy.exc import SQLAlchemyError
-from dlq import push_dead_letter
-from telemetry.manager import get_shared_ledger
 
+from celery_app import celery_app
 from config.cache import close_redis
 from config.settings import settings
+from dlq import push_dead_letter
+from engine import get_calendar_engine, system_instruction
 from models.google_calender_db import CalendarEventDB
-from services.usage_tracker.service import UsageTrackerService
-from engine import get_calendar_engine
-from tasks.events import publish_task_event
 from services.google_calender.service import get_gcal_service
+from services.usage_tracker.service import UsageTrackerService
+from tasks.events import publish_task_event
 from telemetry.manager import get_shared_ledger
 
 # initialize module logger
 logger = logging.getLogger(__name__)
 
 TRANSIENT_HTTP_CODES = {429, 500, 502, 503, 504}
-
-STATIC_SYSTEM_INSTRUCTIONS = Template.from_file("utilities/templates/system_prompt.txt")
 
 # 1. Reuse central settings to resolve database URL and async driver
 ASYNC_DB_URL = str(settings.db.async_url)
@@ -114,7 +109,7 @@ async def _execute_schedule(
                 provider=meta["provider"],
                 model_name=meta["model_name"],
                 query_text=request_text,
-                system_instruction=str(STATIC_SYSTEM_INSTRUCTIONS),
+                system_instruction=system_instruction,
                 prompt_tokens=meta["prompt_tokens"],
                 completion_tokens=meta["completion_tokens"],
                 cached_tokens=meta["cached_tokens"],
@@ -144,7 +139,6 @@ async def _execute_schedule(
     try:
         # Persist record using task-scoped async session from pooled engine
         async with _worker_sessionmaker() as session:
-
             # Ensure gcal_service uses the task-scoped DB session
             gcal_service = await get_gcal_service(user_id=user_id, session=session)
 

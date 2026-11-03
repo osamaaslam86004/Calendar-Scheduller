@@ -1,20 +1,25 @@
 """Integration tests for tasks/google_calender_meeting.py."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from celery.exceptions import MaxRetriesExceededError
 from googleapiclient.errors import HttpError
 from sqlalchemy.exc import SQLAlchemyError
 
 from schemas import (
-    ScheduleCalendarEventFunction,
     CalendarEventDateTime,
+    ScheduleCalendarEventFunction,
     SendUpdatesOption,
 )
 from tasks.google_calender_meeting import (
     _execute_schedule,
     execute_calendar_schedule_task,
 )
+
+# The task is declared with bind=True, so its `run` attribute is already bound to the
+# Celery task instance. Unwrap it so tests can inject their own fake `self`.
+run_task = execute_calendar_schedule_task.run.__func__
 
 
 @pytest.mark.integration
@@ -79,28 +84,36 @@ class TestTasksGoogleCalendarIntegration:
         def mock_publish(channel, event):
             events_published.append(event)
 
-        with patch(
-            "tasks.google_calender_meeting.get_task_sessionmaker",
-            return_value=(mock_engine, mock_sessionmaker),
-        ), patch(
-            "tasks.google_calender_meeting.get_calendar_engine",
-            return_value=calendar_engine_mock,
-        ), patch(
-            "tasks.google_calender_meeting.get_gcal_service",
-            new_callable=AsyncMock,
-            return_value=mock_gcal_service,
-        ), patch(
-            "tasks.google_calender_meeting.UsageTrackerService.log_usage",
-            new_callable=AsyncMock,
-        ) as mock_log_usage, patch(
-            "tasks.google_calender_meeting.get_shared_ledger",
-            return_value=mock_ledger,
-        ), patch(
-            "tasks.google_calender_meeting.publish_task_event",
-            side_effect=mock_publish,
-        ), patch(
-            "tasks.google_calender_meeting.close_redis",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "tasks.google_calender_meeting.get_task_sessionmaker",
+                return_value=(mock_engine, mock_sessionmaker),
+            ),
+            patch(
+                "tasks.google_calender_meeting.get_calendar_engine",
+                return_value=calendar_engine_mock,
+            ),
+            patch(
+                "tasks.google_calender_meeting.get_gcal_service",
+                new_callable=AsyncMock,
+                return_value=mock_gcal_service,
+            ),
+            patch(
+                "tasks.google_calender_meeting.UsageTrackerService.log_usage",
+                new_callable=AsyncMock,
+            ) as mock_log_usage,
+            patch(
+                "tasks.google_calender_meeting.get_shared_ledger",
+                return_value=mock_ledger,
+            ),
+            patch(
+                "tasks.google_calender_meeting.publish_task_event",
+                side_effect=mock_publish,
+            ),
+            patch(
+                "tasks.google_calender_meeting.close_redis",
+                new_callable=AsyncMock,
+            ),
         ):
             result = await _execute_schedule(
                 task_id="celery_task_001",
@@ -140,11 +153,14 @@ class TestTasksGoogleCalendarIntegration:
 
         db_error = SQLAlchemyError("PostgreSQL pool connection timeout")
 
-        with patch(
-            "tasks.google_calender_meeting._execute_schedule",
-            side_effect=db_error,
-        ), patch("tasks.google_calender_meeting.publish_task_event") as mock_publish:
-            res = execute_calendar_schedule_task.run(
+        with (
+            patch(
+                "tasks.google_calender_meeting._execute_schedule",
+                side_effect=db_error,
+            ),
+            patch("tasks.google_calender_meeting.publish_task_event") as mock_publish,
+        ):
+            res = run_task(
                 mock_self,
                 10,
                 "Test meeting",
@@ -173,7 +189,7 @@ class TestTasksGoogleCalendarIntegration:
             side_effect=http_transient_error,
         ):
             with pytest.raises(Exception) as exc_info:
-                execute_calendar_schedule_task.run(
+                run_task(
                     mock_self,
                     10,
                     "Meeting",
@@ -190,12 +206,15 @@ class TestTasksGoogleCalendarIntegration:
         mock_self.request.retries = 5
         mock_self.retry.side_effect = MaxRetriesExceededError("Max retries exceeded")
 
-        with patch(
-            "tasks.google_calender_meeting._execute_schedule",
-            side_effect=TimeoutError("Downstream gateway timeout"),
-        ), patch("tasks.google_calender_meeting.push_dead_letter") as mock_push_dlq:
+        with (
+            patch(
+                "tasks.google_calender_meeting._execute_schedule",
+                side_effect=TimeoutError("Downstream gateway timeout"),
+            ),
+            patch("tasks.google_calender_meeting.push_dead_letter") as mock_push_dlq,
+        ):
             with pytest.raises(MaxRetriesExceededError):
-                execute_calendar_schedule_task.run(
+                run_task(
                     mock_self,
                     15,
                     "High priority executive sync",

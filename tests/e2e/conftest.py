@@ -1,9 +1,13 @@
 """Pytest fixtures and configuration for E2E tests of Calendar Scheduling API."""
 
+import base64
+import json
 import os
 import sys
-from typing import AsyncGenerator, Generator
+import warnings
+from collections.abc import AsyncGenerator, Generator
 
+import itsdangerous
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -13,8 +17,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-
-import warnings
+from sqlalchemy.pool import StaticPool
 
 warnings.filterwarnings(
     "ignore",
@@ -24,13 +27,22 @@ warnings.filterwarnings(
 
 sys.path.insert(0, os.path.abspath("."))
 
-from config.database import Base, get_db
+from config.database import get_db
 from config.settings import settings
 from main import app
+from models.base import Base
 from models.user_db import UserDB
+from tests.redis_fakes import FakeAsyncRedis, FakeSyncRedis
 from utilities.security import build_tenant_context
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+def sign_session_cookie(session_data: dict) -> str:
+    """Build the cookie value SessionMiddleware would have written for this session."""
+    payload = base64.b64encode(json.dumps(session_data).encode("utf-8"))
+    signer = itsdangerous.TimestampSigner(str(settings.security.session_secret))
+    return signer.sign(payload).decode("utf-8")
 
 
 @pytest.fixture(scope="session")
@@ -39,10 +51,27 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def isolate_redis(monkeypatch):
+    """Keep every e2e test offline: Redis is replaced by the shared in-memory fakes."""
+    FakeSyncRedis.store = {}
+    monkeypatch.setattr(
+        "redis.asyncio.from_url", lambda *args, **kwargs: FakeAsyncRedis()
+    )
+    monkeypatch.setattr("config.cache._redis_client", None, raising=False)
+    yield
+
+
 @pytest_asyncio.fixture(scope="function")
 async def test_db_engine():
     """Create an isolated in-memory SQLite database engine for testing."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    # StaticPool keeps one connection so every session sees the same in-memory database.
+    engine = create_async_engine(
+        TEST_DATABASE_URL,
+        echo=False,
+        poolclass=StaticPool,
+        connect_args={"check_same_thread": False},
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield engine
@@ -64,13 +93,18 @@ async def db_session(test_db_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest_asyncio.fixture(scope="function")
-async def mock_app_deps(db_session):
+async def mock_app_deps(db_session, test_db_engine, monkeypatch):
     """Override FastAPI database dependency and session maker."""
 
     async def _get_test_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
     app.dependency_overrides[get_db] = _get_test_db
+    # auth.get_current_user opens its own session, so point that factory at the test DB too.
+    monkeypatch.setattr(
+        "auth.AsyncSessionLocal",
+        async_sessionmaker(test_db_engine, class_=AsyncSession, expire_on_commit=False),
+    )
     yield
     app.dependency_overrides.clear()
 
@@ -124,7 +158,11 @@ async def authenticated_client(
             "allowed_operations": ["schedule", "replay", "audit"],
         },
     )
-    async_client.cookies.set("session", f"user_id={test_user.id}")
+    # The app reads identity from its signed session cookie, so mint a real one.
+    async_client.cookies.set(
+        "session",
+        sign_session_cookie({"user_id": test_user.id, "tenant_context": tenant_token}),
+    )
     async_client.headers.update({"X-Tenant-Context": tenant_token})
     return async_client
 

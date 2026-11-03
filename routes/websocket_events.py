@@ -6,13 +6,12 @@
 # Implement an initial handshaking check against Redis prior to accepting the connection.
 
 import json
+
 import redis.asyncio as aioredis
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
-from fastapi import APIRouter, WebSocket, status
-from fastapi import WebSocketDisconnect
-
-from config.settings import settings
 from config.limiter import get_identifier
+from config.settings import settings
 
 router = APIRouter()
 
@@ -34,8 +33,6 @@ async def task_events(
     }
     """
 
-    await websocket.accept()
-
     # Initialize Async Redis Client
     redis_client = aioredis.from_url(
         settings.redis.async_url,
@@ -50,6 +47,7 @@ async def task_events(
         await redis_client.expire(client_key, 60)
 
     if connection_count > 10:
+        # Denied before the handshake so no accepted socket is left open
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         await redis_client.close()
         return
