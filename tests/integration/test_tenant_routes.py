@@ -1,5 +1,4 @@
-import unittest.mock
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Patch redis.Redis.from_url before main is imported
 patcher = patch("redis.Redis.from_url")
@@ -29,6 +28,7 @@ def dummy_decorator(*args, **kwargs):
 mock_limiter.side_effect = dummy_decorator
 
 from fastapi.testclient import TestClient
+
 from main import app
 from utilities.security import build_tenant_context
 
@@ -58,7 +58,9 @@ def test_tenant_context_extracted(mock_redis_from_url):
     mock_redis.incr.return_value = 1
     mock_redis_from_url.return_value = mock_redis
 
-    headers = {"X-Tenant-ID": "tenant-abc", "Authorization": "Bearer some-token"}
+    # Generate a valid signed JWT for tenant-abc
+    token = build_tenant_context("tenant-abc")
+    headers = {"X-Tenant-ID": "tenant-abc", "Authorization": f"Bearer {token}"}
 
     response = client.get("/api/v1/tenant-resources/", headers=headers)
     assert response.status_code == 200
@@ -105,7 +107,9 @@ def test_audit_emission_and_fallback_mode(mock_redis_from_url):
     mock_redis.incr.return_value = 1
     mock_redis_from_url.return_value = mock_redis
 
-    headers = {"X-Tenant-ID": "tenant-def", "Authorization": "Bearer action-token"}
+    # Generate a valid signed JWT for tenant-def
+    token = build_tenant_context("tenant-def")
+    headers = {"X-Tenant-ID": "tenant-def", "Authorization": f"Bearer {token}"}
     payload = {"some_key": "some_value"}
 
     response = client.post(

@@ -35,8 +35,7 @@
       "**/staticfiles/**",
       "**/static/**",
       "**/dist/**",
-      "**/build/**",
-      "**/tests/**"
+      "**/build/**"
     ]
   }
 }

@@ -90,6 +90,13 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                     )
                 tenant_id = claim_tenant_id
 
+        elif auth_token and auth_token.lower().startswith("bearer "):
+            # Reject invalid or unparseable Bearer JWT tokens
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or expired authorization token"},
+            )
+
         if not tenant_id:
             return JSONResponse(
                 status_code=401,
