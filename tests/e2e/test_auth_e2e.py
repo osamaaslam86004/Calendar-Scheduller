@@ -25,9 +25,7 @@ async def test_login_redirect_flow(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_callback_success(
-    async_client: AsyncClient, db_session: AsyncSession
-):
+async def test_callback_success(async_client: AsyncClient, db_session: AsyncSession):
     """Test OAuth callback authenticates user and creates tokens."""
     state_token = "e2e_test_state_secret_12345"
     mock_id_info = {
@@ -74,9 +72,7 @@ async def test_callback_success(
             assert created_user.email == "new_oauth_user@example.com"
 
             token_result = await db_session.execute(
-                select(OAuthTokenDB).where(
-                    OAuthTokenDB.user_id == created_user.id
-                )
+                select(OAuthTokenDB).where(OAuthTokenDB.user_id == created_user.id)
             )
             created_token = token_result.scalar_one_or_none()
             assert created_token is not None
@@ -107,10 +103,8 @@ async def test_unauthenticated_protected_route_access(
     async_client: AsyncClient,
 ):
     """Test accessing async schedule without auth returns 401."""
-    payload = {
-        "request_text": "Schedule a sync meeting with team tomorrow at 10 AM"
-    }
+    payload = {"request_text": "Schedule a sync meeting with team tomorrow at 10 AM"}
     response = await async_client.post("/api/v1/async-schedule", json=payload)
 
     assert response.status_code == 401
-    assert "Authentication required" in response.json().get("detail", "")
+    assert "Tenant context required" in response.json().get("detail", "")

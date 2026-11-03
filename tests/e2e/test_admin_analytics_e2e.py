@@ -5,12 +5,31 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.llm_response_tracker_db import LLMUsageLogDB
+from utilities.security import build_tenant_context
+
+
+def _get_admin_headers(tenant_id: int = 1) -> dict:
+    """Helper to generate signed tenant JWT and headers for E2E tests."""
+    tenant_jwt = build_tenant_context(
+        tenant_id=tenant_id,
+        scopes=["admin", "analytics:read"],
+        operation="read",
+        entity_key=f"user:{tenant_id}",
+        bounds={"allowed_operations": ["read"]},
+    )
+    return {
+        "X-Tenant-ID": str(tenant_id),
+        "Authorization": f"Bearer {tenant_jwt}",
+        "X-Tenant-JWT": tenant_jwt,
+    }
 
 
 @pytest.mark.asyncio
 async def test_admin_llm_analytics_empty(async_client: AsyncClient):
     """Test LLM analytics endpoint with no logs returns empty summary."""
-    response = await async_client.get("/api/v1/admin/llm-analytics")
+
+    headers = _get_admin_headers(1)
+    response = await async_client.get("/api/v1/admin/llm-analytics", headers=headers)
 
     assert response.status_code == 200
     data = response.json()
@@ -67,7 +86,8 @@ async def test_admin_llm_analytics_populated(
     db_session.add_all([log1, log2, log3])
     await db_session.commit()
 
-    response = await async_client.get("/api/v1/admin/llm-analytics")
+    headers = _get_admin_headers(1)
+    response = await async_client.get("/api/v1/admin/llm-analytics", headers=headers)
 
     assert response.status_code == 200
     data = response.json()
@@ -76,17 +96,13 @@ async def test_admin_llm_analytics_populated(
     summary = data["summary"]
     assert len(summary) == 2
 
-    google_entry = next(
-        (s for s in summary if s["provider"] == "google"), None
-    )
+    google_entry = next((s for s in summary if s["provider"] == "google"), None)
     assert google_entry is not None
     assert google_entry["total_requests"] == 2
     assert google_entry["token_breakdown"]["total_tokens"] == 340
     assert google_entry["cache_hit_rate"] == "50.0%"
 
-    openrouter_entry = next(
-        (s for s in summary if s["provider"] == "openrouter"), None
-    )
+    openrouter_entry = next((s for s in summary if s["provider"] == "openrouter"), None)
     assert openrouter_entry is not None
     assert openrouter_entry["total_requests"] == 1
     assert openrouter_entry["cache_hit_rate"] == "0.0%"
@@ -125,13 +141,13 @@ async def test_admin_llm_analytics_filtered_by_tenant(
     db_session.add_all([log_user1, log_user2])
     await db_session.commit()
 
+    headers = _get_admin_headers(101)
     response = await async_client.get(
-        "/api/v1/admin/llm-analytics", params={"tenant_id": 101}
+        "/api/v1/admin/llm-analytics", params={"tenant_id": 101}, headers=headers
     )
-
     assert response.status_code == 200
     data = response.json()
-    assert data["tenant_id"] == "101"
+    assert data["tenant_id"] == 101
 
     summary = data["summary"]
     assert len(summary) == 1

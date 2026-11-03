@@ -12,47 +12,57 @@ from schemas import ScheduleCalendarEventFunction
 from utilities.security import build_tenant_context
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_dlq_auth_required(async_client: AsyncClient):
     """Test accessing DLQ admin endpoints without admin key returns 401."""
     response = await async_client.get("/admin/dlq/")
     assert response.status_code == 401
-    assert "Admin auth required" in response.json().get("detail", "")
+    assert "Tenant context required" in response.json().get("detail", "")
 
     replay_payload = {"message_id": "task-uuid-123"}
-    response = await async_client.post(
-        "/admin/dlq/replay", json=replay_payload
-    )
+    response = await async_client.post("/admin/dlq/replay", json=replay_payload)
     assert response.status_code == 401
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 async def test_list_dlq_entries(
-    async_client: AsyncClient, admin_headers: dict[str, str]
+    async_client: AsyncClient,
+    admin_headers: dict[str, str],
+    test_user: UserDB,
 ):
-    """Test listing DLQ entries returns list of DLQEntry objects."""
-    fake_dlq_payload = {
-        "task_id": "task-dead-001",
-        "user_id": 1,
-        "request_text": "Schedule client pitch meeting",
-        "error": "Google API 503 Backend Error",
-        "created_at": "2026-10-30T12:00:00Z",
+    """Test listing DLQ entries with valid admin headers and signed tenant JWT context."""
+    tenant_jwt = build_tenant_context(
+        tenant_id=test_user.id,
+        scopes=["dlq:read", "dlq:replay"],
+        operation="read",
+        entity_key=f"user:{test_user.id}",
+    )
+
+    headers = {
+        **admin_headers,
+        "X-Tenant-Context": tenant_jwt,
     }
 
-    mock_sync_redis = MagicMock()
-    mock_sync_redis.lrange.return_value = [json.dumps(fake_dlq_payload)]
-
-    with patch("routes.dlq_admin.redis_client", mock_sync_redis):
-        response = await async_client.get(
-            "/admin/dlq/", headers=admin_headers
+    with patch("routes.dlq_admin.redis_client") as mock_redis:
+        dlq_payload = json.dumps(
+            {
+                "task_id": "task-fail-123",
+                "user_id": test_user.id,
+                "request_text": "Schedule meeting",
+                "error": "Task execution timeout",
+                "created_at": "2026-10-30T12:00:00Z",
+            }
         )
+        mock_redis.lrange.return_value = [dlq_payload]
 
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, list)
-    assert len(data) == 1
-    assert data[0]["task_id"] == "task-dead-001"
-    assert data[0]["error"] == "Google API 503 Backend Error"
+        response = await async_client.get("/admin/dlq/", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["task_id"] == "task-fail-123"
 
 
 @pytest.mark.asyncio
@@ -66,9 +76,7 @@ async def test_dlq_dry_run_success(
     fake_dlq_payload = {
         "task_id": msg_id,
         "user_id": test_user.id,
-        "request_text": (
-            "Schedule a quarterly review meeting tomorrow at 4 PM UTC"
-        ),
+        "request_text": ("Schedule a quarterly review meeting tomorrow at 4 PM UTC"),
         "error": "Timeout Error",
         "created_at": "2026-10-30T12:00:00Z",
     }
@@ -161,9 +169,7 @@ async def test_dlq_replay_success(
 
     with (
         patch("routes.dlq_admin.redis_client", mock_sync_redis),
-        patch(
-            "celery_app.celery_app.send_task", return_value=mock_async_result
-        ),
+        patch("celery_app.celery_app.send_task", return_value=mock_async_result),
         patch("routes.dlq_admin.append_audit_event"),
     ):
         response = await async_client.post(

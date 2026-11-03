@@ -28,7 +28,7 @@ async def test_async_schedule_success(authenticated_client: AsyncClient):
     with (
         patch("config.cache.get_redis_client", return_value=mock_redis),
         patch(
-            "utilities.redis_scripts.atomic_consume",
+            "routes.meeting_scheduler.atomic_consume",
             return_value=(True, 1, 100),
         ),
         patch(
@@ -53,8 +53,7 @@ async def test_async_schedule_rate_limiting(
     """Test rate limit enforcement returns 429 when quota exceeded."""
     payload = {
         "request_text": (
-            "Schedule a quick standup with dev-team@company.com "
-            "tomorrow at 9 AM UTC."
+            "Schedule a quick standup with dev-team@company.com tomorrow at 9 AM UTC."
         )
     }
     mock_redis = AsyncMock()
@@ -62,7 +61,7 @@ async def test_async_schedule_rate_limiting(
     with (
         patch("config.cache.get_redis_client", return_value=mock_redis),
         patch(
-            "utilities.redis_scripts.atomic_consume",
+            "routes.meeting_scheduler.atomic_consume",
             return_value=(False, 6, 50001),
         ),
     ):
@@ -80,9 +79,7 @@ async def test_async_schedule_circuit_breaker_open(
 ):
     """Test circuit breaker open state raises 503 when degraded."""
     payload = {
-        "request_text": (
-            "Schedule a project kickoff meeting tomorrow at 2 PM UTC."
-        )
+        "request_text": ("Schedule a project kickoff meeting tomorrow at 2 PM UTC.")
     }
 
     mock_anomaly_mgr = AsyncMock()
@@ -93,9 +90,7 @@ async def test_async_schedule_circuit_breaker_open(
 
     app.state.flag_anomaly_manager = mock_anomaly_mgr
 
-    response = await authenticated_client.post(
-        "/api/v1/async-schedule", json=payload
-    )
+    response = await authenticated_client.post("/api/v1/async-schedule", json=payload)
 
     assert response.status_code == 503
     assert "System degraded" in response.json().get("detail", "")
@@ -107,9 +102,7 @@ async def test_async_schedule_idempotency_payload_mismatch(
 ):
     """Test idempotency key reuse with modified payload raises 422."""
     payload = {
-        "request_text": (
-            "Schedule a budget review meeting with finance@company.com."
-        )
+        "request_text": ("Schedule a budget review meeting with finance@company.com.")
     }
 
     mock_redis = AsyncMock()
@@ -118,14 +111,20 @@ async def test_async_schedule_idempotency_payload_mismatch(
         "Payload mismatch for key"
     )
 
+    mock_anomaly_mgr = AsyncMock()
+    mock_anomaly_mgr.is_circuit_open.return_value = (
+        False  # Ensure circuit breaker is closed
+    )
+
     from main import app
 
     app.state.message_bus = mock_bus
+    app.state.flag_anomaly_manager = mock_anomaly_mgr
 
     with (
         patch("config.cache.get_redis_client", return_value=mock_redis),
         patch(
-            "utilities.redis_scripts.atomic_consume",
+            "routes.meeting_scheduler.atomic_consume",
             return_value=(True, 1, 50),
         ),
     ):
@@ -148,15 +147,12 @@ async def test_task_status_polling_pending(
     mock_result.state = "PENDING"
 
     with (
-        patch(
-            "celery_app.celery_app.backend.get_key_for_task", return_value="key"
-        ),
-        patch("celery_app.celery_app.backend.get", return_value=b"meta"),
+        patch("routes.task_status.celery_app") as mock_celery_backend,
         patch("routes.task_status.AsyncResult", return_value=mock_result),
     ):
-        response = await authenticated_client.get(
-            f"/api/v1/tasks/{test_task_id}"
-        )
+        mock_celery_backend.backend.get_key_for_task.return_value = "key"
+        mock_celery_backend.backend.get.return_value = b"meta"
+        response = await authenticated_client.get(f"/api/v1/tasks/{test_task_id}")
 
     assert response.status_code == 200
     data = response.json()
@@ -177,15 +173,12 @@ async def test_task_status_polling_success(
     mock_result.result = expected_result
 
     with (
-        patch(
-            "celery_app.celery_app.backend.get_key_for_task", return_value="key"
-        ),
-        patch("celery_app.celery_app.backend.get", return_value=b"meta"),
+        patch("routes.task_status.celery_app") as mock_celery_backend,
         patch("routes.task_status.AsyncResult", return_value=mock_result),
     ):
-        response = await authenticated_client.get(
-            f"/api/v1/tasks/{test_task_id}"
-        )
+        mock_celery_backend.backend.get_key_for_task.return_value = "key"
+        mock_celery_backend.backend.get.return_value = b"meta"
+        response = await authenticated_client.get(f"/api/v1/tasks/{test_task_id}")
 
     assert response.status_code == 200
     data = response.json()
@@ -207,15 +200,12 @@ async def test_task_status_polling_failure(
     mock_result.result = Exception("Google Calendar API quota exceeded")
 
     with (
-        patch(
-            "celery_app.celery_app.backend.get_key_for_task", return_value="key"
-        ),
-        patch("celery_app.celery_app.backend.get", return_value=b"meta"),
+        patch("routes.task_status.celery_app") as mock_celery_backend,
         patch("routes.task_status.AsyncResult", return_value=mock_result),
     ):
-        response = await authenticated_client.get(
-            f"/api/v1/tasks/{test_task_id}"
-        )
+        mock_celery_backend.backend.get_key_for_task.return_value = "key"
+        mock_celery_backend.backend.get.return_value = b"meta"
+        response = await authenticated_client.get(f"/api/v1/tasks/{test_task_id}")
 
     assert response.status_code == 200
     data = response.json()
@@ -227,9 +217,7 @@ async def test_task_status_polling_failure(
 @pytest.mark.asyncio
 async def test_task_status_invalid_uuid(authenticated_client: AsyncClient):
     """Test task status polling with non-UUID returns 422 error."""
-    response = await authenticated_client.get(
-        "/api/v1/tasks/invalid-non-uuid-string"
-    )
+    response = await authenticated_client.get("/api/v1/tasks/invalid-non-uuid-string")
     assert response.status_code == 422
 
 
@@ -239,17 +227,16 @@ async def test_task_status_not_found(authenticated_client: AsyncClient):
     non_existent_task_id = str(uuid.uuid4())
 
     with (
-        patch(
-            "celery_app.celery_app.backend.get_key_for_task", return_value="key"
-        ),
-        patch("celery_app.celery_app.backend.get", return_value=None),
+        patch("routes.task_status.celery_app") as mock_celery_backend,
+        patch("routes.task_status.AsyncResult"),
     ):
+        mock_celery_backend.backend.get_key_for_task.return_value = "key"
+        mock_celery_backend.backend.get.return_value = None
         response = await authenticated_client.get(
             f"/api/v1/tasks/{non_existent_task_id}"
         )
 
     assert response.status_code == 404
-    assert (
-        f"Task ID '{non_existent_task_id}' was not found."
-        in response.json().get("detail", "")
+    assert f"Task ID '{non_existent_task_id}' was not found." in response.json().get(
+        "detail", ""
     )

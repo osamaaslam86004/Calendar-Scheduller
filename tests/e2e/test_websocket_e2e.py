@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import status
 from fastapi.testclient import TestClient
@@ -21,9 +21,10 @@ def test_websocket_event_streaming():
     }
 
     mock_pubsub = AsyncMock()
-    mock_pubsub.listen.return_value = [
-        {"type": "message", "data": json.dumps(test_event_data)},
-        {
+
+    async def mock_listen_generator():
+        yield {"type": "message", "data": json.dumps(test_event_data)}
+        yield {
             "type": "message",
             "data": json.dumps(
                 {
@@ -33,15 +34,14 @@ def test_websocket_event_streaming():
                     "result": {"event_id": "google-cal-001"},
                 }
             ),
-        },
-    ]
+        }
+
+    mock_pubsub.listen = mock_listen_generator
 
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
-    mock_redis.pubsub.return_value = mock_pubsub
-    mock_redis.get.side_effect = (
-        lambda key: "1" if "req_bucket" in key else "500"
-    )
+    mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+    mock_redis.get.side_effect = lambda key: "1" if "req_bucket" in key else "500"
 
     with patch("redis.asyncio.from_url", return_value=mock_redis):
         with TestClient(app) as client:
@@ -92,13 +92,15 @@ def test_websocket_terminal_state_disconnect():
     }
 
     mock_pubsub = AsyncMock()
-    mock_pubsub.listen.return_value = [
-        {"type": "message", "data": json.dumps(terminal_event)}
-    ]
+
+    async def mock_listen_generator():
+        yield {"type": "message", "data": json.dumps(terminal_event)}
+
+    mock_pubsub.listen = mock_listen_generator
 
     mock_redis = AsyncMock()
     mock_redis.incr.return_value = 1
-    mock_redis.pubsub.return_value = mock_pubsub
+    mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
 
     with patch("redis.asyncio.from_url", return_value=mock_redis):
         with TestClient(app) as client:
