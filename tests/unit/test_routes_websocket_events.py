@@ -4,6 +4,7 @@ Unit tests for routes/websocket_events.py
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi import WebSocket, WebSocketDisconnect, status
 
@@ -41,12 +42,12 @@ class TestWebSocketEvents:
         ):
             await task_events(mock_websocket, "task_ws_rate_limit")
 
-        assert mock_websocket.accept.call_count == 1
-        mock_websocket.close.assert_called_once_with(
+        # Assert connection was never accepted and closed with WS_1008_POLICY_VIOLATION
+        mock_websocket.accept.assert_not_awaited()
+        mock_websocket.close.assert_awaited_once_with(
             code=status.WS_1008_POLICY_VIOLATION
         )
-        assert mock_redis_client.close.called
-        assert not mock_redis_client.pubsub.called
+        mock_redis_client.close.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_websocket_stream_messages_and_terminates_on_completed(
@@ -84,14 +85,14 @@ class TestWebSocketEvents:
         ):
             await task_events(mock_websocket, "task_stream_01")
 
-        assert mock_websocket.accept.call_count == 2
+        mock_websocket.accept.assert_awaited_once()
         assert mock_websocket.send_json.call_count == 2
         mock_websocket.send_json.assert_any_call(json.loads(msg_start["data"]))
         mock_websocket.send_json.assert_any_call(json.loads(msg_done["data"]))
 
         mock_pubsub.unsubscribe.assert_called_once_with("task_events:task_stream_01")
-        assert mock_pubsub.close.called
-        assert mock_redis_client.close.called
+        mock_pubsub.close.assert_awaited_once()
+        mock_redis_client.close.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_websocket_quota_augmentation_for_user_event(
