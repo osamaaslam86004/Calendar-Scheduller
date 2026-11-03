@@ -1,19 +1,14 @@
 import logging
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
-import outlines
-import torch
 
 # Google SDK imports
 from google import genai
 from google.genai import types
-
-# Prompt Template import
-from outlines.templates import Template
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from config.settings import settings
 from schemas import ScheduleCalendarEventFunction
@@ -28,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 
 # Static System Instructions (Exact string match across all calls for Maximum Cache Hits)
-system_instruction = str(Template.from_file("utilities/templates/system_prompt.txt"))
+SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / (
+    "utilities/templates/system_prompt.txt"
+)
+system_instruction = SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
 
 
 # ==========================================
@@ -241,6 +239,12 @@ class LocalLlamaProvider(BaseLLMProvider):
         """Lazy loads tokenizer and model weights using Hugging Face transformers."""
 
         if self._model is None or self._tokenizer is None:
+            # torch/transformers/outlines are heavy and platform-sensitive, so they are
+            # imported only when a local run is actually requested.
+            import outlines
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
             logger.info(f"Initializing local GGUF model via PyTorch: {self.filename}")
 
             hf_token = None
