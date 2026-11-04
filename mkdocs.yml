@@ -1,0 +1,91 @@
+site_name: Calendar Scheduling API Documentation
+site_description: Production-grade FastAPI Natural Language Calendar Scheduling Backend Documentation
+site_author: Maintainer Team
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.path
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - header.autohide
+
+plugins:
+  - search
+  - autorefs
+  - panzoom
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+  - pymdownx.details
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home: index.md
+  - Architecture & Core Design:
+      - Overview & Topology: architecture/overview.md
+      - Request Lifecycle & Message Bus: architecture/request-lifecycle.md
+      - Feature Flags & Anomaly Engine: architecture/feature-flags-anomaly.md
+  - Security & Governance:
+      - Tenant Context & RBAC: security/tenant-rbac.md
+      - Audit Ledger & Data Privacy: security/audit-ledger.md
+      - OAuth Token Lifecycle: security/oauth-rotation.md
+  - API Reference:
+      - Authentication & Sessions: api/auth.md
+      - Scheduling & Event Parsing: api/scheduling.md
+      - WebSockets Event Streaming: api/websockets.md
+      - Multi-Tenant Management: api/tenants.md
+      - Admin DLQ & Safe Replay: api/dlq-admin.md
+      - Feature Flags & Controls: api/feature-flags-admin.md
+      - Monitoring & Metrics: api/monitoring.md
+  - Background Workers & Operations:
+      - Celery Workers & Tasks: operations/celery-tasks.md
+      - DLQ & Incident Quarantine: operations/dlq-management.md
+      - Monitoring & Observability: operations/monitoring.md
+  - Development & Testing:
+      - Setup & Deployment: dev/setup.md
+      - Testing & Benchmarking: dev/testing.md
